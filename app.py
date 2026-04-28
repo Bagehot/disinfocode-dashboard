@@ -43,6 +43,7 @@ def load_data() -> pd.DataFrame:
         axis=1,
     )
     df["sli_label"] = df.apply(lambda r: make_label(r["sli_code"], r["sli_name"]), axis=1)
+    df = df[df["country"].isin(set(POPULATION.keys()))].copy()
     return df
 
 
