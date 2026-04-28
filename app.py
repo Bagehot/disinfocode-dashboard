@@ -1,5 +1,5 @@
 """
-DisinfoCode Interactive Dashboard — v3
+DisinfoCode Interactive Dashboard — v4
 Ejecutar: streamlit run app.py
 """
 
@@ -25,16 +25,17 @@ CSV_PATH   = Path(__file__).parent / "output" / "metrics_raw.csv"
 WAVE_ORDER = ["March 2025", "September 2025", "March 2026"]
 EU_MEMBERS = [k for k in POPULATION if not k.startswith("Total")]
 NONE_OPT   = "— Ninguna —"
+GEO_OPTS   = ["Total EU", "Total EEA"] + sorted(EU_MEMBERS)
 
 COLOR_SEQ  = px.colors.qualitative.Bold
-COLOR_SEQ2 = px.colors.qualitative.Pastel
+COLOR_ALPHA = px.colors.qualitative.Alphabet
 
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
     df = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df[df["value"].notna() & (df["value"] > 0)].copy()
+    df = df[df["value"].notna()].copy()
     df["wave_label"] = pd.Categorical(df["wave_label"], categories=WAVE_ORDER, ordered=True)
     df["population"] = df["country"].map(POPULATION)
     df["value_per_100k"] = df.apply(
@@ -65,6 +66,12 @@ def pick_sli(frame: pd.DataFrame, chosen: str) -> pd.DataFrame:
     return frame[frame["sli_label"] == chosen]
 
 
+def filter_countries(frame: pd.DataFrame, selected: list) -> pd.DataFrame:
+    if selected:
+        return frame[frame["country"].isin(selected)]
+    return frame
+
+
 def apply_metric(frame: pd.DataFrame, mode: str, df_base: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     if mode == "% sobre Total EU":
         totals = (
@@ -92,6 +99,10 @@ def no_data_warning():
 
 def run_btn(key: str) -> bool:
     return st.form_submit_button("▶ Analizar", use_container_width=True, type="primary")
+
+
+def color_radio(key: str) -> str:
+    return st.radio("Color por", ["Plataforma", "País"], horizontal=True, key=key)
 
 
 # ── SIDEBAR ────────────────────────────────────────────────────────────────────
@@ -158,7 +169,6 @@ tab0, tab1, tab2, tab3, tab4, tab4b, tab5, tab6, tab7 = tabs
 with tab0:
     st.subheader("Análisis general — resumen de los filtros activos")
 
-    # Resumen de filtros
     with st.expander("📌 Filtros activos", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
@@ -172,7 +182,6 @@ with tab0:
             st.markdown(f"**Capítulos:** {', '.join(sel_chapters) if sel_chapters else '_todos_'}")
             st.markdown(f"**Unidad:** {mlabel}")
 
-    # Métricas rápidas
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Registros", f"{len(df):,}")
     c2.metric("Plataformas", df["platform"].nunique() if not df.empty else 0)
@@ -185,7 +194,7 @@ with tab0:
         no_data_warning()
     else:
         with st.form("tab0_form"):
-            r1, r2 = st.columns([3, 2])
+            r1, r2, r3 = st.columns([3, 2, 2])
             with r1:
                 chart0_type = st.selectbox(
                     "Tipo de visualización general",
@@ -193,57 +202,65 @@ with tab0:
                     key="t0_chart",
                 )
             with r2:
-                chart0_scope = st.selectbox(
-                    "Ámbito de agregación",
-                    [NONE_OPT, "Total EU", "Total EEA"] + EU_MEMBERS,
-                    key="t0_scope",
-                )
+                chart0_countries = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t0_countries")
+            with r3:
+                chart0_color = color_radio("t0_color")
             submitted0 = run_btn("tab0")
 
         if submitted0:
             st.session_state["t0_params"] = {
                 "chart_type": chart0_type,
-                "scope": chart0_scope,
+                "countries": chart0_countries,
+                "color_by": chart0_color,
             }
 
         p0 = st.session_state.get("t0_params")
         if not p0:
             st.info("Configura los filtros en la barra lateral y pulsa **▶ Analizar**.")
         else:
-            ct = p0["chart_type"]
-            sc = p0["scope"]
-
-            d0 = df.copy()
-            if sc != NONE_OPT:
-                d0 = d0[d0["country"] == sc]
+            d0 = filter_countries(df, p0["countries"])
+            cb0 = p0["color_by"]
+            ct0 = p0["chart_type"]
 
             if d0.empty:
                 no_data_warning()
-            elif ct == "Barras por plataforma y ola":
-                agg0 = d0.groupby(["platform", "wave_label"])["metric"].sum().reset_index()
-                fig0 = px.bar(agg0, x="platform", y="metric", color="wave_label", barmode="group",
-                              color_discrete_sequence=COLOR_SEQ,
-                              labels={"metric": mlabel, "platform": "Plataforma", "wave_label": "Ola"},
-                              title="Total por plataforma y ola",
-                              category_orders={"wave_label": WAVE_ORDER})
+            elif ct0 == "Barras por plataforma y ola":
+                if cb0 == "País":
+                    agg0 = d0.groupby(["wave_label", "country"])["metric"].sum().reset_index()
+                    fig0 = px.bar(agg0, x="wave_label", y="metric", color="country", barmode="group",
+                                  color_discrete_sequence=COLOR_ALPHA,
+                                  labels={"metric": mlabel, "wave_label": "Ola", "country": "País"},
+                                  title="Total por país y ola",
+                                  category_orders={"wave_label": WAVE_ORDER})
+                else:
+                    agg0 = d0.groupby(["platform", "wave_label"])["metric"].sum().reset_index()
+                    fig0 = px.bar(agg0, x="platform", y="metric", color="wave_label", barmode="group",
+                                  color_discrete_sequence=COLOR_SEQ,
+                                  labels={"metric": mlabel, "platform": "Plataforma", "wave_label": "Ola"},
+                                  title="Total por plataforma y ola",
+                                  category_orders={"wave_label": WAVE_ORDER})
                 fig0.update_layout(xaxis_tickangle=-30)
                 st.plotly_chart(fig0, use_container_width=True)
 
-            elif ct == "Distribución por capítulo":
-                agg0 = d0.groupby(["chapter", "platform"])["metric"].sum().reset_index()
-                fig0 = px.bar(agg0, x="chapter", y="metric", color="platform", barmode="stack",
-                              color_discrete_sequence=COLOR_SEQ,
-                              labels={"metric": mlabel, "chapter": "Capítulo", "platform": "Plataforma"},
+            elif ct0 == "Distribución por capítulo":
+                color_col = "country" if cb0 == "País" else "platform"
+                color_lbl = "País" if cb0 == "País" else "Plataforma"
+                agg0 = d0.groupby(["chapter", color_col])["metric"].sum().reset_index()
+                fig0 = px.bar(agg0, x="chapter", y="metric", color=color_col, barmode="stack",
+                              color_discrete_sequence=COLOR_ALPHA if cb0 == "País" else COLOR_SEQ,
+                              labels={"metric": mlabel, "chapter": "Capítulo", color_col: color_lbl},
                               title="Distribución por capítulo temático")
                 fig0.update_layout(xaxis_tickangle=-30)
                 st.plotly_chart(fig0, use_container_width=True)
 
-            elif ct == "Evolución por plataforma":
-                agg0 = d0.groupby(["wave_label", "platform"])["metric"].sum().reset_index()
-                fig0 = px.line(agg0, x="wave_label", y="metric", color="platform", markers=True,
-                               color_discrete_sequence=COLOR_SEQ,
-                               labels={"metric": mlabel, "wave_label": "Ola", "platform": "Plataforma"},
-                               title="Evolución total por plataforma",
+            elif ct0 == "Evolución por plataforma":
+                color_col = "country" if cb0 == "País" else "platform"
+                color_lbl = "País" if cb0 == "País" else "Plataforma"
+                agg0 = d0.groupby(["wave_label", color_col])["metric"].sum().reset_index()
+                fig0 = px.line(agg0, x="wave_label", y="metric", color=color_col, markers=True,
+                               color_discrete_sequence=COLOR_ALPHA if cb0 == "País" else COLOR_SEQ,
+                               labels={"metric": mlabel, "wave_label": "Ola", color_col: color_lbl},
+                               title="Evolución total",
                                category_orders={"wave_label": WAVE_ORDER})
                 fig0.update_traces(line_width=2.5, marker_size=9)
                 st.plotly_chart(fig0, use_container_width=True)
@@ -255,8 +272,7 @@ with tab0:
                               color="metric", color_continuous_scale="Blues",
                               labels={"metric": mlabel, "sli_label": "Variable SLI"},
                               title="Top 20 variables SLI por valor agregado")
-                fig0.update_layout(yaxis={"categoryorder": "total ascending"},
-                                   height=max(400, len(agg0) * 30))
+                fig0.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, len(agg0) * 30))
                 st.plotly_chart(fig0, use_container_width=True)
 
 
@@ -266,23 +282,28 @@ with tab0:
 with tab1:
     st.subheader("Comparativa por Plataforma")
 
-    agg1 = df.groupby(["platform", "wave_label", "sli_label", "chapter"])["metric"].sum().reset_index()
-    opts1 = sli_opts(agg1)
+    agg1_raw = df.groupby(["platform", "wave_label", "sli_label", "country"])["metric"].sum().reset_index()
+    opts1 = sli_opts(agg1_raw)
 
     with st.form("tab1_form"):
-        col_sel, col_chart = st.columns([3, 2])
-        with col_sel:
+        r1, r2 = st.columns([3, 2])
+        with r1:
             chosen1 = st.selectbox("Variable SLI", opts1, key="t1_sli")
-        with col_chart:
             chart1 = st.selectbox(
                 "Tipo de gráfico",
                 ["Barras agrupadas", "Barras apiladas", "Líneas", "Área", "Dispersión", "Treemap"],
                 key="t1_chart",
             )
+        with r2:
+            countries1 = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t1_countries")
+            color_by1 = color_radio("t1_color")
         submitted1 = run_btn("tab1")
 
     if submitted1:
-        st.session_state["t1_params"] = {"chosen": chosen1, "chart": chart1}
+        st.session_state["t1_params"] = {
+            "chosen": chosen1, "chart": chart1,
+            "countries": countries1, "color_by": color_by1,
+        }
 
     p1 = st.session_state.get("t1_params")
     if not p1:
@@ -290,41 +311,51 @@ with tab1:
     elif p1["chosen"] == NONE_OPT:
         st.info("Selecciona una variable SLI para continuar.")
     else:
-        d1 = pick_sli(agg1, p1["chosen"])
+        d1_raw = pick_sli(agg1_raw, p1["chosen"])
+        d1_raw = filter_countries(d1_raw, p1["countries"])
+        cb1 = p1["color_by"]
         ct1 = p1["chart"]
+
+        if cb1 == "Plataforma":
+            d1 = d1_raw.groupby(["platform", "wave_label"])["metric"].sum().reset_index()
+            color_col, color_lbl = "wave_label", "Ola"
+            x_col, x_lbl = "platform", "Plataforma"
+        else:
+            d1 = d1_raw.groupby(["wave_label", "country"])["metric"].sum().reset_index()
+            color_col, color_lbl = "country", "País"
+            x_col, x_lbl = "wave_label", "Ola"
+
         if d1.empty:
             no_data_warning()
         else:
             kw = dict(
-                color_discrete_sequence=COLOR_SEQ,
-                labels={"metric": mlabel, "platform": "Plataforma", "wave_label": "Ola"},
+                color_discrete_sequence=COLOR_ALPHA if cb1 == "País" else COLOR_SEQ,
+                labels={"metric": mlabel, x_col: x_lbl, color_col: color_lbl},
                 category_orders={"wave_label": WAVE_ORDER},
             )
+            title1 = f"{p1['chosen']} — {'por país' if cb1 == 'País' else 'por plataforma'}"
             if ct1 == "Barras agrupadas":
-                fig1 = px.bar(d1, x="platform", y="metric", color="wave_label", barmode="group",
-                              title=f"{p1['chosen']} — Comparativa entre plataformas", **kw)
+                fig1 = px.bar(d1, x=x_col, y="metric", color=color_col, barmode="group", title=title1, **kw)
                 fig1.update_layout(xaxis_tickangle=-30)
             elif ct1 == "Barras apiladas":
-                fig1 = px.bar(d1, x="platform", y="metric", color="wave_label", barmode="stack",
-                              title=f"{p1['chosen']} — Acumulado por plataforma", **kw)
+                fig1 = px.bar(d1, x=x_col, y="metric", color=color_col, barmode="stack", title=title1, **kw)
                 fig1.update_layout(xaxis_tickangle=-30)
             elif ct1 == "Líneas":
-                fig1 = px.line(d1, x="wave_label", y="metric", color="platform", markers=True,
-                               title=f"{p1['chosen']} — Evolución", **kw)
+                fig1 = px.line(d1, x=x_col, y="metric", color=color_col, markers=True, title=title1, **kw)
                 fig1.update_traces(line_width=2.5, marker_size=9)
             elif ct1 == "Área":
-                fig1 = px.area(d1, x="wave_label", y="metric", color="platform",
-                               title=f"{p1['chosen']} — Área acumulada", **kw)
+                fig1 = px.area(d1, x=x_col, y="metric", color=color_col, title=title1, **kw)
             elif ct1 == "Dispersión":
-                fig1 = px.scatter(d1, x="platform", y="metric", color="wave_label", size="metric",
-                                  title=f"{p1['chosen']} — Dispersión", **kw)
+                fig1 = px.scatter(d1, x=x_col, y="metric", color=color_col, size="metric", title=title1, **kw)
             else:
-                fig1 = px.treemap(d1, path=["wave_label", "platform"], values="metric",
-                                  color="metric", color_continuous_scale="Blues",
-                                  title=f"{p1['chosen']} — Treemap")
+                path1 = ["wave_label", "platform"] if cb1 == "Plataforma" else ["wave_label", "country"]
+                fig1 = px.treemap(d1_raw.groupby(["wave_label","platform","country"])["metric"].sum().reset_index(),
+                                  path=path1, values="metric",
+                                  color="metric", color_continuous_scale="Blues", title=title1)
             st.plotly_chart(fig1, use_container_width=True)
 
-            pivot1 = d1.pivot_table(index="platform", columns="wave_label", values="metric", aggfunc="sum")
+            idx_col = "platform" if cb1 == "Plataforma" else "country"
+            pivot1 = d1.pivot_table(index=idx_col, columns="wave_label", values="metric", aggfunc="sum")
             pivot1 = pivot1.reindex(columns=[w for w in WAVE_ORDER if w in pivot1.columns]).round(2)
             pivot1.columns.name = None
             st.dataframe(pivot1, use_container_width=True)
@@ -356,6 +387,7 @@ with tab2:
                     [NONE_OPT] + sorted(df_c["platform"].unique()),
                     key="t2_plat",
                 )
+            countries2 = st.multiselect("Filtrar países (vacío = todos)", sorted(df_c["country"].unique()), default=[], key="t2_countries")
             chart2 = st.radio(
                 "Tipo de gráfico",
                 ["Barras horizontales", "Barras verticales", "Burbuja (vs. población)", "Embudo"],
@@ -365,7 +397,8 @@ with tab2:
 
         if submitted2:
             st.session_state["t2_params"] = {
-                "chosen": chosen2, "wave": wave2, "plat": plat2, "chart": chart2,
+                "chosen": chosen2, "wave": wave2, "plat": plat2,
+                "countries": countries2, "chart": chart2,
             }
 
         p2 = st.session_state.get("t2_params")
@@ -374,8 +407,9 @@ with tab2:
         elif p2["chosen"] == NONE_OPT or p2["wave"] == NONE_OPT or p2["plat"] == NONE_OPT:
             st.info("Selecciona variable SLI, ola y plataforma para continuar.")
         else:
-            d2 = (pick_sli(df_c, p2["chosen"])
-                  .query("wave_label == @p2['wave'] and platform == @p2['plat']")
+            base2 = pick_sli(df_c, p2["chosen"])
+            base2 = filter_countries(base2, p2["countries"])
+            d2 = (base2.query("wave_label == @p2['wave'] and platform == @p2['plat']")
                   .groupby("country")["metric"].sum().reset_index()
                   .sort_values("metric", ascending=False))
 
@@ -388,7 +422,7 @@ with tab2:
                                   color="metric", color_continuous_scale="Blues",
                                   labels={"metric": mlabel, "country": "País"},
                                   title=f"{p2['chosen']} · {p2['plat']} · {p2['wave']}")
-                    fig2.update_layout(yaxis={"categoryorder": "total ascending"}, height=700)
+                    fig2.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, len(d2) * 28))
                 elif ct2 == "Barras verticales":
                     fig2 = px.bar(d2, x="country", y="metric",
                                   color="metric", color_continuous_scale="Blues",
@@ -409,25 +443,31 @@ with tab2:
                                      title=f"{p2['chosen']} · Top 15 países")
                 st.plotly_chart(fig2, use_container_width=True)
 
-        # Evolución entre olas (formulario separado)
-        st.subheader("Evolución entre olas · todos los países")
+        # Evolución entre olas
+        st.subheader("Evolución entre olas · comparativa por país")
         with st.form("tab2b_form"):
-            cb1, cb2, cb3 = st.columns(3)
+            cb1, cb2, cb3, cb4 = st.columns(4)
             with cb1:
                 chosen2b = st.selectbox("Variable SLI", sli_opts(df_c), key="t2b_sli")
             with cb2:
                 plat2b = st.selectbox("Plataforma", [NONE_OPT] + sorted(df_c["platform"].unique()), key="t2b_plat")
             with cb3:
+                countries2b = st.multiselect("Países (vacío = todos)", sorted(df_c["country"].unique()), default=[], key="t2b_countries")
+            with cb4:
                 chart2b = st.radio("Tipo", ["Barras agrupadas", "Líneas", "Barras apiladas"], key="t2b_chart")
             submitted2b = run_btn("tab2b")
 
         if submitted2b:
-            st.session_state["t2b_params"] = {"chosen": chosen2b, "plat": plat2b, "chart": chart2b}
+            st.session_state["t2b_params"] = {
+                "chosen": chosen2b, "plat": plat2b,
+                "countries": countries2b, "chart": chart2b,
+            }
 
         p2b = st.session_state.get("t2b_params")
         if p2b and p2b["chosen"] != NONE_OPT and p2b["plat"] != NONE_OPT:
-            d2b = (pick_sli(df_c, p2b["chosen"])
-                   .query("platform == @p2b['plat']")
+            base2b = pick_sli(df_c, p2b["chosen"])
+            base2b = filter_countries(base2b, p2b["countries"])
+            d2b = (base2b.query("platform == @p2b['plat']")
                    .groupby(["country", "wave_label"])["metric"].sum().reset_index())
             if not d2b.empty:
                 kw2b = dict(x="country", y="metric", color="wave_label",
@@ -451,42 +491,53 @@ with tab3:
     st.subheader("Evolución a lo largo de las tres olas")
 
     with st.form("tab3_form"):
-        r1, r2, r3 = st.columns([3, 2, 2])
+        r1, r2, r3, r4 = st.columns([3, 2, 2, 2])
         with r1:
             chosen3 = st.selectbox("Variable SLI", sli_opts(df), key="t3_sli")
         with r2:
-            country3 = st.selectbox(
-                "País / Ámbito",
-                [NONE_OPT, "Total EU", "Total EEA"] + EU_MEMBERS,
-                key="t3_country",
-            )
+            countries3 = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t3_countries")
         with r3:
             chart3 = st.selectbox(
                 "Tipo de gráfico",
                 ["Líneas + marcadores", "Barras agrupadas", "Área", "Barras apiladas"],
                 key="t3_chart",
             )
+        with r4:
+            color_by3 = color_radio("t3_color")
         submitted3 = run_btn("tab3")
 
     if submitted3:
-        st.session_state["t3_params"] = {"chosen": chosen3, "country": country3, "chart": chart3}
+        st.session_state["t3_params"] = {
+            "chosen": chosen3, "countries": countries3,
+            "chart": chart3, "color_by": color_by3,
+        }
 
     p3 = st.session_state.get("t3_params")
     if not p3:
         st.info("Selecciona los parámetros y pulsa **▶ Analizar**.")
-    elif p3["chosen"] == NONE_OPT or p3["country"] == NONE_OPT:
-        st.info("Selecciona una variable SLI y un país/ámbito para continuar.")
+    elif p3["chosen"] == NONE_OPT:
+        st.info("Selecciona una variable SLI para continuar.")
     else:
-        d3 = (pick_sli(df, p3["chosen"]).query("country == @p3['country']")
-              .groupby(["wave_label", "platform"])["metric"].sum().reset_index())
+        cb3 = p3["color_by"]
+        base3 = pick_sli(df, p3["chosen"])
+        base3 = filter_countries(base3, p3["countries"])
+
+        if cb3 == "Plataforma":
+            d3 = base3.groupby(["wave_label", "platform"])["metric"].sum().reset_index()
+            color_col3, color_lbl3 = "platform", "Plataforma"
+        else:
+            d3 = base3.groupby(["wave_label", "country"])["metric"].sum().reset_index()
+            color_col3, color_lbl3 = "country", "País"
+
         if d3.empty:
             no_data_warning()
         else:
-            kw3 = dict(x="wave_label", y="metric", color="platform",
-                       labels={"metric": mlabel, "wave_label": "Ola", "platform": "Plataforma"},
-                       title=f"{p3['chosen']} — {p3['country']}",
+            paises_str = ", ".join(p3["countries"]) if p3["countries"] else "todos"
+            kw3 = dict(x="wave_label", y="metric", color=color_col3,
+                       labels={"metric": mlabel, "wave_label": "Ola", color_col3: color_lbl3},
+                       title=f"{p3['chosen']} — {paises_str}",
                        category_orders={"wave_label": WAVE_ORDER},
-                       color_discrete_sequence=COLOR_SEQ)
+                       color_discrete_sequence=COLOR_ALPHA if cb3 == "País" else COLOR_SEQ)
             ct3 = p3["chart"]
             if ct3 == "Líneas + marcadores":
                 fig3 = px.line(d3, markers=True, **kw3)
@@ -499,7 +550,7 @@ with tab3:
                 fig3 = px.bar(d3, barmode="stack", **kw3)
             st.plotly_chart(fig3, use_container_width=True)
 
-            piv3 = d3.pivot_table(index="platform", columns="wave_label", values="metric")
+            piv3 = d3.pivot_table(index=color_col3, columns="wave_label", values="metric")
             for i in range(1, len(WAVE_ORDER)):
                 wp, wc = WAVE_ORDER[i - 1], WAVE_ORDER[i]
                 if wp in piv3.columns and wc in piv3.columns:
@@ -534,47 +585,60 @@ with tab4:
                 plat_a = st.selectbox("Plataforma", [NONE_OPT] + platforms, key="t4a_plat")
                 wave_a = st.selectbox("Ola", [NONE_OPT] + WAVE_ORDER, key="t4a_wave")
                 chart_a = st.radio("Gráfico", ["Barras horizontales", "Barras verticales", "Treemap"], key="t4a_chart")
+                color_by_a = color_radio("t4a_color")
             with r2:
-                scope_a = st.selectbox("País / Ámbito", [NONE_OPT, "Total EU", "Total EEA"] + EU_MEMBERS, key="t4a_scope")
+                countries_a = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t4a_countries")
                 slis_a = st.multiselect("Variables SLI (≥ 2)", sli_labels_all, default=[], key="t4a_slis")
             submitted4a = run_btn("tab4a")
 
         if submitted4a:
             st.session_state["t4a_params"] = {
                 "plat": plat_a, "wave": wave_a, "chart": chart_a,
-                "scope": scope_a, "slis": slis_a,
+                "color_by": color_by_a, "countries": countries_a, "slis": slis_a,
             }
 
         p4a = st.session_state.get("t4a_params")
         if not p4a:
             st.info("Configura los parámetros y pulsa **▶ Analizar**.")
-        elif any(v == NONE_OPT for v in [p4a["plat"], p4a["wave"], p4a["scope"]]) or not p4a["slis"]:
-            st.info("Completa todos los campos (plataforma, ola, ámbito y al menos una variable SLI).")
+        elif any(v == NONE_OPT for v in [p4a["plat"], p4a["wave"]]) or not p4a["slis"]:
+            st.info("Completa plataforma, ola y al menos una variable SLI.")
         else:
-            da = (df[(df["platform"] == p4a["plat"]) & (df["sli_label"].isin(p4a["slis"])) &
-                     (df["wave_label"] == p4a["wave"]) & (df["country"] == p4a["scope"])]
-                  .groupby("sli_label")["metric"].sum().reset_index()
-                  .sort_values("metric", ascending=False))
+            base_a = df[(df["platform"] == p4a["plat"]) &
+                        (df["sli_label"].isin(p4a["slis"])) &
+                        (df["wave_label"] == p4a["wave"])]
+            base_a = filter_countries(base_a, p4a["countries"])
+            cb_a = p4a["color_by"]
+
+            if cb_a == "País":
+                da = base_a.groupby(["sli_label", "country"])["metric"].sum().reset_index()
+            else:
+                da = base_a.groupby("sli_label")["metric"].sum().reset_index().sort_values("metric", ascending=False)
+
             if da.empty:
                 no_data_warning()
             else:
+                paises_str_a = ", ".join(p4a["countries"]) if p4a["countries"] else "todos"
+                title_a = f"{p4a['plat']} · {p4a['wave']} · {paises_str_a}"
                 ct4a = p4a["chart"]
-                if ct4a == "Barras horizontales":
+                if cb_a == "País":
+                    fig4a = px.bar(da, x="metric", y="sli_label", color="country", orientation="h",
+                                   barmode="group", color_discrete_sequence=COLOR_ALPHA,
+                                   labels={"metric": mlabel, "sli_label": "Variable SLI", "country": "País"},
+                                   title=title_a)
+                    fig4a.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, len(da) * 25))
+                elif ct4a == "Barras horizontales":
                     fig4a = px.bar(da, x="metric", y="sli_label", orientation="h",
                                    color="metric", color_continuous_scale="Blues",
-                                   labels={"metric": mlabel, "sli_label": "Variable SLI"},
-                                   title=f"{p4a['plat']} · {p4a['wave']} · {p4a['scope']}")
+                                   labels={"metric": mlabel, "sli_label": "Variable SLI"}, title=title_a)
                     fig4a.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, len(da) * 35))
                 elif ct4a == "Barras verticales":
                     fig4a = px.bar(da, x="sli_label", y="metric",
                                    color="metric", color_continuous_scale="Blues",
-                                   labels={"metric": mlabel, "sli_label": "Variable SLI"},
-                                   title=f"{p4a['plat']} · {p4a['wave']} · {p4a['scope']}")
+                                   labels={"metric": mlabel, "sli_label": "Variable SLI"}, title=title_a)
                     fig4a.update_layout(xaxis_tickangle=-40)
                 else:
                     fig4a = px.treemap(da, path=["sli_label"], values="metric",
-                                       color="metric", color_continuous_scale="Blues",
-                                       title=f"{p4a['plat']} · {p4a['wave']} · {p4a['scope']}")
+                                       color="metric", color_continuous_scale="Blues", title=title_a)
                 st.plotly_chart(fig4a, use_container_width=True)
 
     # ── B ─────────────────────────────────────────────────────────────────────
@@ -589,10 +653,13 @@ with tab4:
             with r3:
                 waves_b = st.select_slider("Olas a comparar", options=WAVE_ORDER,
                                            value=(WAVE_ORDER[0], WAVE_ORDER[-1]), key="t4b_waves")
+            countries_b = st.multiselect("Países (vacío = todos)", sorted(EU_MEMBERS), default=[], key="t4b_countries")
             submitted4b = run_btn("tab4b")
 
         if submitted4b:
-            st.session_state["t4b_params"] = {"sli": sli_b, "plat": plat_b, "waves": waves_b}
+            st.session_state["t4b_params"] = {
+                "sli": sli_b, "plat": plat_b, "waves": waves_b, "countries": countries_b,
+            }
 
         p4b = st.session_state.get("t4b_params")
         if not p4b:
@@ -603,6 +670,7 @@ with tab4:
             wave_x, wave_y = p4b["waves"]
             df_b = pick_sli(df[~df["country"].str.contains("Total")], p4b["sli"])
             df_b = df_b[df_b["platform"] == p4b["plat"]]
+            df_b = filter_countries(df_b, p4b["countries"])
             px_d = df_b[df_b["wave_label"] == wave_x].groupby("country")["metric"].sum().rename("x")
             py_d = df_b[df_b["wave_label"] == wave_y].groupby("country")["metric"].sum().rename("y")
             d_sc = pd.concat([px_d, py_d], axis=1).dropna().reset_index()
@@ -668,7 +736,7 @@ with tab4:
                         .groupby(["country", "wave_label"])["metric"].sum().reset_index())
                 if not d_c2.empty:
                     fig4c2 = px.line(d_c2, x="wave_label", y="metric", color="country",
-                                     markers=True, color_discrete_sequence=px.colors.qualitative.Alphabet,
+                                     markers=True, color_discrete_sequence=COLOR_ALPHA,
                                      labels={"metric": mlabel, "wave_label": "Ola", "country": "País"},
                                      category_orders={"wave_label": WAVE_ORDER},
                                      title=f"Evolución del Top {p4c['topn']} · {p4c['sli']} · {p4c['plat']}")
@@ -677,57 +745,76 @@ with tab4:
 
     # ── D ─────────────────────────────────────────────────────────────────────
     elif analysis4.startswith("D"):
-        st.markdown("**Compara todas las plataformas para un país y variable concretos, en las tres olas.**")
+        st.markdown("**Compara todas las plataformas para uno o varios países y una variable, en las tres olas.**")
         with st.form("tab4d_form"):
             r1, r2, r3 = st.columns(3)
             with r1:
                 sli_d = st.selectbox("Variable SLI", [NONE_OPT] + sli_labels_all, key="t4d_sli")
             with r2:
-                country_d = st.selectbox("País / Ámbito", [NONE_OPT, "Total EU", "Total EEA"] + EU_MEMBERS, key="t4d_country")
+                countries_d = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t4d_countries")
             with r3:
                 chart_d = st.radio("Gráfico", ["Barras agrupadas", "Líneas", "Radar"], key="t4d_chart")
+            color_by_d = color_radio("t4d_color")
             submitted4d = run_btn("tab4d")
 
         if submitted4d:
-            st.session_state["t4d_params"] = {"sli": sli_d, "country": country_d, "chart": chart_d}
+            st.session_state["t4d_params"] = {
+                "sli": sli_d, "countries": countries_d,
+                "chart": chart_d, "color_by": color_by_d,
+            }
 
         p4d = st.session_state.get("t4d_params")
         if not p4d:
             st.info("Configura los parámetros y pulsa **▶ Analizar**.")
-        elif p4d["sli"] == NONE_OPT or p4d["country"] == NONE_OPT:
-            st.info("Selecciona variable SLI y país/ámbito.")
+        elif p4d["sli"] == NONE_OPT:
+            st.info("Selecciona una variable SLI.")
         else:
-            d_d = (pick_sli(df, p4d["sli"]).query("country == @p4d['country']")
-                   .groupby(["platform", "wave_label"])["metric"].sum().reset_index())
+            cb_d = p4d["color_by"]
+            base_d = pick_sli(df, p4d["sli"])
+            base_d = filter_countries(base_d, p4d["countries"])
+
+            if cb_d == "Plataforma":
+                d_d = base_d.groupby(["platform", "wave_label"])["metric"].sum().reset_index()
+                color_col_d, color_lbl_d = "wave_label", "Ola"
+                x_col_d, x_lbl_d = "platform", "Plataforma"
+            else:
+                d_d = base_d.groupby(["country", "wave_label"])["metric"].sum().reset_index()
+                color_col_d, color_lbl_d = "country", "País"
+                x_col_d, x_lbl_d = "wave_label", "Ola"
+
+            paises_str_d = ", ".join(p4d["countries"]) if p4d["countries"] else "todos"
             if d_d.empty:
                 no_data_warning()
             else:
                 ct4d = p4d["chart"]
                 if ct4d == "Barras agrupadas":
-                    fig4d = px.bar(d_d, x="platform", y="metric", color="wave_label", barmode="group",
-                                   color_discrete_sequence=COLOR_SEQ,
-                                   labels={"metric": mlabel, "platform": "Plataforma", "wave_label": "Ola"},
+                    fig4d = px.bar(d_d, x=x_col_d, y="metric", color=color_col_d, barmode="group",
+                                   color_discrete_sequence=COLOR_ALPHA if cb_d == "País" else COLOR_SEQ,
+                                   labels={"metric": mlabel, x_col_d: x_lbl_d, color_col_d: color_lbl_d},
                                    category_orders={"wave_label": WAVE_ORDER},
-                                   title=f"{p4d['sli']} · {p4d['country']}")
+                                   title=f"{p4d['sli']} · {paises_str_d}")
                     fig4d.update_layout(xaxis_tickangle=-30)
                 elif ct4d == "Líneas":
-                    fig4d = px.line(d_d, x="wave_label", y="metric", color="platform", markers=True,
-                                    color_discrete_sequence=COLOR_SEQ,
-                                    labels={"metric": mlabel, "wave_label": "Ola", "platform": "Plataforma"},
+                    fig4d = px.line(d_d, x=x_col_d, y="metric", color=color_col_d, markers=True,
+                                    color_discrete_sequence=COLOR_ALPHA if cb_d == "País" else COLOR_SEQ,
+                                    labels={"metric": mlabel, x_col_d: x_lbl_d, color_col_d: color_lbl_d},
                                     category_orders={"wave_label": WAVE_ORDER},
-                                    title=f"{p4d['sli']} · {p4d['country']}")
+                                    title=f"{p4d['sli']} · {paises_str_d}")
                     fig4d.update_traces(line_width=2.5, marker_size=9)
-                else:
-                    plats_d = d_d["platform"].unique().tolist()
+                else:  # Radar (solo funciona bien con pocos elementos)
+                    cats_d = d_d[color_col_d].unique().tolist()
                     fig4d = go.Figure()
                     for wave in WAVE_ORDER:
-                        sub = d_d[d_d["wave_label"] == wave]
-                        vals = [sub[sub["platform"] == p]["metric"].sum() for p in plats_d]
-                        vals += [vals[0]]
-                        fig4d.add_trace(go.Scatterpolar(r=vals, theta=plats_d + [plats_d[0]], fill="toself", name=wave))
+                        sub = d_d[d_d["wave_label"] == wave] if cb_d == "Plataforma" else d_d
+                        if cb_d == "Plataforma":
+                            vals = [sub[sub["platform"] == p]["metric"].sum() for p in cats_d]
+                        else:
+                            vals = [sub[sub["country"] == c]["metric"].sum() for c in cats_d]
+                        if vals:
+                            vals += [vals[0]]
+                            fig4d.add_trace(go.Scatterpolar(r=vals, theta=cats_d + [cats_d[0]], fill="toself", name=wave))
                     fig4d.update_layout(polar=dict(radialaxis=dict(visible=True)),
-                                        title=f"{p4d['sli']} · {p4d['country']} — Radar de plataformas",
-                                        height=550)
+                                        title=f"{p4d['sli']} · {paises_str_d} — Radar", height=550)
                 st.plotly_chart(fig4d, use_container_width=True)
 
     # ── E ─────────────────────────────────────────────────────────────────────
@@ -740,36 +827,41 @@ with tab4:
             with r2:
                 wave_e = st.selectbox("Ola", [NONE_OPT] + WAVE_ORDER, key="t4e_wave")
             with r3:
-                scope_e = st.selectbox("País / Ámbito", [NONE_OPT, "Total EU", "Total EEA"] + EU_MEMBERS, key="t4e_scope")
+                countries_e = st.multiselect("Países (vacío = todos)", GEO_OPTS, default=[], key="t4e_countries")
             slis_e = st.multiselect("Variables SLI a incluir", sli_labels_all, default=[], key="t4e_slis")
             submitted4e = run_btn("tab4e")
 
         if submitted4e:
             st.session_state["t4e_params"] = {
-                "plat": plat_e, "wave": wave_e, "scope": scope_e, "slis": slis_e,
+                "plat": plat_e, "wave": wave_e,
+                "countries": countries_e, "slis": slis_e,
             }
 
         p4e = st.session_state.get("t4e_params")
         if not p4e:
             st.info("Configura los parámetros y pulsa **▶ Analizar**.")
-        elif any(v == NONE_OPT for v in [p4e["plat"], p4e["wave"], p4e["scope"]]) or not p4e["slis"]:
-            st.info("Completa todos los campos (plataforma, ola, ámbito y variables SLI).")
+        elif any(v == NONE_OPT for v in [p4e["plat"], p4e["wave"]]) or not p4e["slis"]:
+            st.info("Completa plataforma, ola y variables SLI.")
         else:
-            d_e = (df[(df["platform"] == p4e["plat"]) & (df["wave_label"] == p4e["wave"]) &
-                      (df["country"] == p4e["scope"]) & (df["sli_label"].isin(p4e["slis"]))]
-                   .groupby("sli_label")["metric"].sum().reset_index())
+            base_e = df[(df["platform"] == p4e["plat"]) &
+                        (df["wave_label"] == p4e["wave"]) &
+                        (df["sli_label"].isin(p4e["slis"]))]
+            base_e = filter_countries(base_e, p4e["countries"])
+            d_e = base_e.groupby("sli_label")["metric"].sum().reset_index()
+
             if d_e.empty:
                 no_data_warning()
             else:
                 d_e["metric_norm"] = d_e["metric"] / d_e["metric"].max()
                 cats = d_e["sli_label"].tolist() + [d_e["sli_label"].iloc[0]]
                 vals = d_e["metric_norm"].tolist() + [d_e["metric_norm"].iloc[0]]
+                paises_str_e = ", ".join(p4e["countries"]) if p4e["countries"] else "todos"
                 fig4e = go.Figure()
                 fig4e.add_trace(go.Scatterpolar(r=vals, theta=cats, fill="toself",
                                                 name=p4e["plat"], line_color=COLOR_SEQ[0]))
                 fig4e.update_layout(
                     polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-                    title=f"Perfil de {p4e['plat']} · {p4e['wave']} · {p4e['scope']} (norm. 0-1)",
+                    title=f"Perfil de {p4e['plat']} · {p4e['wave']} · {paises_str_e} (norm. 0-1)",
                     height=600,
                 )
                 st.plotly_chart(fig4e, use_container_width=True)
@@ -817,17 +909,19 @@ with tab4b:
         # ── 1 ─────────────────────────────────────────────────────────────────
         if analysis_10m.startswith("1"):
             with st.form("tab10m1_form"):
-                r1, r2, r3 = st.columns(3)
+                r1, r2, r3, r4 = st.columns(4)
                 with r1:
                     sli_10 = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_1_sli")
                 with r2:
                     wave_10 = st.selectbox("Ola", [NONE_OPT] + [w for w in WAVE_ORDER if w in df_10m["wave_label"].values], key="t4b_1_wave")
                 with r3:
                     chart_10 = st.radio("Gráfico", ["Barras agrupadas por país", "Barras agrupadas por plataforma", "Líneas", "Mapa Top 10M"], key="t4b_1_chart")
+                with r4:
+                    color_by_10 = color_radio("t4b_1_color")
                 sub10_1 = run_btn("tab10m1")
 
             if sub10_1:
-                st.session_state["t10m1_params"] = {"sli": sli_10, "wave": wave_10, "chart": chart_10}
+                st.session_state["t10m1_params"] = {"sli": sli_10, "wave": wave_10, "chart": chart_10, "color_by": color_by_10}
 
             p10_1 = st.session_state.get("t10m1_params")
             if not p10_1:
@@ -835,27 +929,24 @@ with tab4b:
             elif p10_1["sli"] == NONE_OPT or p10_1["wave"] == NONE_OPT:
                 st.info("Selecciona variable SLI y ola.")
             else:
+                cb_10 = p10_1["color_by"]
                 d10 = (pick_sli(df_10m, p10_1["sli"]).query("wave_label == @p10_1['wave']")
                        .groupby(["country", "platform"])["metric"].sum().reset_index())
                 if d10.empty:
                     no_data_warning()
                 else:
                     ct10 = p10_1["chart"]
-                    if ct10 == "Barras agrupadas por país":
-                        fig10 = px.bar(d10, x="country", y="metric", color="platform", barmode="group",
-                                       color_discrete_sequence=COLOR_SEQ,
+                    color_10 = "country" if cb_10 == "País" else "platform"
+                    x_10 = "platform" if cb_10 == "País" else "country"
+                    if ct10 == "Barras agrupadas por país" or ct10 == "Barras agrupadas por plataforma":
+                        fig10 = px.bar(d10, x=x_10, y="metric", color=color_10, barmode="group",
+                                       color_discrete_sequence=COLOR_ALPHA if cb_10 == "País" else COLOR_SEQ,
                                        labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
                                        title=f"{p10_1['sli']} · {p10_1['wave']} — Top 10M")
                         fig10.update_layout(xaxis_tickangle=-30, height=500)
-                    elif ct10 == "Barras agrupadas por plataforma":
-                        fig10 = px.bar(d10, x="platform", y="metric", color="country", barmode="group",
-                                       color_discrete_sequence=px.colors.qualitative.Alphabet,
-                                       labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
-                                       title=f"{p10_1['sli']} · {p10_1['wave']} — Top 10M por plataforma")
-                        fig10.update_layout(xaxis_tickangle=-30, height=500)
                     elif ct10 == "Líneas":
-                        fig10 = px.line(d10, x="country", y="metric", color="platform", markers=True,
-                                        color_discrete_sequence=COLOR_SEQ,
+                        fig10 = px.line(d10, x=x_10, y="metric", color=color_10, markers=True,
+                                        color_discrete_sequence=COLOR_ALPHA if cb_10 == "País" else COLOR_SEQ,
                                         labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
                                         title=f"{p10_1['sli']} · {p10_1['wave']} — Top 10M")
                         fig10.update_layout(xaxis_tickangle=-30)
@@ -922,17 +1013,19 @@ with tab4b:
         # ── 3 ─────────────────────────────────────────────────────────────────
         elif analysis_10m.startswith("3"):
             with st.form("tab10m3_form"):
-                r1, r2, r3 = st.columns(3)
+                r1, r2, r3, r4 = st.columns(4)
                 with r1:
                     sli_10c = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_3_sli")
                 with r2:
                     plat_10c = st.selectbox("Plataforma", [NONE_OPT] + sorted(df_10m["platform"].unique()), key="t4b_3_plat")
                 with r3:
                     chart_10c = st.radio("Gráfico", ["Líneas por país", "Barras agrupadas por ola", "Área"], key="t4b_3_chart")
+                with r4:
+                    color_by_10c = color_radio("t4b_3_color")
                 sub10_3 = run_btn("tab10m3")
 
             if sub10_3:
-                st.session_state["t10m3_params"] = {"sli": sli_10c, "plat": plat_10c, "chart": chart_10c}
+                st.session_state["t10m3_params"] = {"sli": sli_10c, "plat": plat_10c, "chart": chart_10c, "color_by": color_by_10c}
 
             p10_3 = st.session_state.get("t10m3_params")
             if not p10_3:
@@ -940,14 +1033,16 @@ with tab4b:
             elif p10_3["sli"] == NONE_OPT or p10_3["plat"] == NONE_OPT:
                 st.info("Selecciona variable SLI y plataforma.")
             else:
-                d10c = (pick_sli(df_10m, p10_3["sli"]).query("platform == @p10_3['plat']")
-                        .groupby(["country", "wave_label"])["metric"].sum().reset_index())
+                cb_10c = p10_3["color_by"]
+                color_col_10c = "country" if cb_10c == "País" else "platform"
+                base_10c = pick_sli(df_10m, p10_3["sli"]).query("platform == @p10_3['plat']")
+                d10c = base_10c.groupby(["wave_label", color_col_10c])["metric"].sum().reset_index()
                 if d10c.empty:
                     no_data_warning()
                 else:
-                    kw10c = dict(x="wave_label", y="metric", color="country",
-                                 color_discrete_sequence=px.colors.qualitative.Alphabet,
-                                 labels={"metric": mlabel, "wave_label": "Ola", "country": "País"},
+                    kw10c = dict(x="wave_label", y="metric", color=color_col_10c,
+                                 color_discrete_sequence=COLOR_ALPHA if cb_10c == "País" else COLOR_SEQ,
+                                 labels={"metric": mlabel, "wave_label": "Ola", color_col_10c: cb_10c},
                                  category_orders={"wave_label": WAVE_ORDER},
                                  title=f"{p10_3['sli']} · {p10_3['plat']} — Evolución Top 10M")
                     ct10c = p10_3["chart"]
@@ -960,8 +1055,7 @@ with tab4b:
                         fig10c = px.area(d10c, **kw10c)
                     fig10c.update_layout(height=520)
                     st.plotly_chart(fig10c, use_container_width=True)
-                    piv10c = d10c.pivot_table(index="country", columns="wave_label", values="metric")
-                    piv10c.index.name = "País"
+                    piv10c = d10c.pivot_table(index=color_col_10c, columns="wave_label", values="metric")
                     for i in range(1, len(WAVE_ORDER)):
                         wp, wc = WAVE_ORDER[i - 1], WAVE_ORDER[i]
                         if wp in piv10c.columns and wc in piv10c.columns:
@@ -1001,7 +1095,7 @@ with tab4b:
                 else:
                     fig10d = px.scatter(d10d, x="x", y="y", text="country",
                                         size="population", color="country", size_max=60,
-                                        color_discrete_sequence=px.colors.qualitative.Alphabet,
+                                        color_discrete_sequence=COLOR_ALPHA,
                                         labels={"x": f"{mlabel} · {wx}", "y": f"{mlabel} · {wy}"},
                                         title=f"{p10_4['sli']} · {p10_4['plat']} — {wx} vs {wy} · Top 10M")
                     mx = max(d10d[["x", "y"]].max())
@@ -1086,7 +1180,6 @@ with tab5:
                   .query("wave_label == @p5['wave'] and platform == @p5['plat']")
                   .groupby("country")["metric"].sum().reset_index())
             d5["country_plot"] = d5["country"].replace({"Czech Republic": "Czechia"})
-
             if d5.empty:
                 no_data_warning()
             else:
@@ -1097,7 +1190,6 @@ with tab5:
                 fig5.update_layout(height=620)
                 st.plotly_chart(fig5, use_container_width=True)
 
-        # Comparativa de dos olas
         st.subheader("Comparativa de dos olas en mapa")
         with st.form("tab5b_form"):
             cb1, cb2, cb3 = st.columns(3)
@@ -1115,15 +1207,15 @@ with tab5:
 
         p5b = st.session_state.get("t5b_params")
         if p5b and all(v != NONE_OPT for v in [p5b["chosen"], p5b["wave1"], p5b["wave2"], p5b["plat"]]):
-            def make_map(data, title):
-                d = (pick_sli(data, p5b["chosen"])
-                     .query("wave_label == @title and platform == @p5b['plat']")
+            def make_map(wave_val):
+                d = (pick_sli(df_map, p5b["chosen"])
+                     .query("wave_label == @wave_val and platform == @p5b['plat']")
                      .groupby("country")["metric"].sum().reset_index())
                 d["country_plot"] = d["country"].replace({"Czech Republic": "Czechia"})
                 return d
 
-            da5 = make_map(df_map, p5b["wave1"])
-            db5 = make_map(df_map, p5b["wave2"])
+            da5 = make_map(p5b["wave1"])
+            db5 = make_map(p5b["wave2"])
             if not da5.empty and not db5.empty:
                 ca, cb = st.columns(2)
                 with ca:
