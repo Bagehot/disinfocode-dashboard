@@ -176,7 +176,7 @@ with tab0:
     c1.metric("Registros", f"{len(df):,}")
     c2.metric("Plataformas", df["platform"].nunique() if not df.empty else 0)
     c3.metric("Variables SLI", df["sli_label"].nunique() if not df.empty else 0)
-    c4.metric("Países", df[~df["country"].str.contains("Total", na=False)]["country"].nunique() if not df.empty else 0)
+    c4.metric("Países", df[df["country"].isin(EU_MEMBERS)]["country"].nunique() if not df.empty else 0)
 
     st.divider()
 
