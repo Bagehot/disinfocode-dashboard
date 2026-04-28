@@ -140,11 +140,12 @@ tabs = st.tabs([
     "🌍 Por País",
     "📈 Evolución temporal",
     "🔄 Comparativas avanzadas",
+    "🌆 Top 10M",
     "🗺️ Mapa",
     "🔥 Heatmap",
     "📋 Tabla de datos",
 ])
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = tabs
+tab1, tab2, tab3, tab4, tab4b, tab5, tab6, tab7 = tabs
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  TAB 1 — Por Plataforma                                                     ║
@@ -580,6 +581,280 @@ with tab4:
             st.dataframe(d_e[["sli_label","metric"]].rename(
                 columns={"sli_label":"Variable","metric":mlabel}
             ).set_index("Variable"), use_container_width=True)
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  TAB 4B — Top 10M                                                           ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+TOP10M_COUNTRIES = sorted(
+    [c for c, p in POPULATION.items() if p >= 10_000_000 and not c.startswith("Total")]
+)
+TOP10M_POPS = {c: POPULATION[c] for c in TOP10M_COUNTRIES}
+
+with tab4b:
+    st.subheader("🌆 Análisis Top 10M — Países con más de 10 millones de habitantes")
+
+    # Información de los países
+    with st.expander("ℹ️ Países incluidos en este análisis"):
+        pop_df = pd.DataFrame(
+            [(c, f"{TOP10M_POPS[c]:,}") for c in sorted(TOP10M_COUNTRIES, key=lambda x: -TOP10M_POPS[x])],
+            columns=["País", "Población (2024)"],
+        )
+        st.dataframe(pop_df.set_index("País"), use_container_width=True)
+
+    # Filtrar datos al subconjunto Top 10M
+    df_10m = df[df["country"].isin(TOP10M_COUNTRIES)].copy()
+
+    if df_10m.empty:
+        st.warning("Sin datos. Asegúrate de seleccionar 'Por estado miembro' o 'Ambos' en el filtro geográfico.")
+    else:
+        analysis_10m = st.radio(
+            "Tipo de análisis",
+            [
+                "1 · Una variable · Todos los países y plataformas",
+                "2 · Varias variables · Una plataforma",
+                "3 · Evolución temporal · Top 10M",
+                "4 · Comparativa entre dos olas · Dispersión",
+                "5 · Heatmap País × Plataforma",
+            ],
+            horizontal=False,
+            key="t4b_mode",
+        )
+
+        # ── 1: Una variable, todos los países ─────────────────────────────────
+        if analysis_10m.startswith("1"):
+            r1, r2, r3 = st.columns(3)
+            with r1:
+                sli_10 = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_1_sli")
+            with r2:
+                wave_10 = st.selectbox("Ola", [w for w in WAVE_ORDER if w in df_10m["wave_label"].values], key="t4b_1_wave")
+            with r3:
+                chart_10 = st.radio("Gráfico", ["Barras agrupadas por país", "Barras agrupadas por plataforma", "Líneas", "Mapa Top 10M"], horizontal=False, key="t4b_1_chart")
+
+            d10 = (pick_sli(df_10m, sli_10)
+                   .query("wave_label == @wave_10")
+                   .groupby(["country", "platform"])["metric"].sum().reset_index())
+
+            if d10.empty:
+                st.info("Sin datos para esta combinación.")
+            else:
+                if chart_10 == "Barras agrupadas por país":
+                    fig10 = px.bar(
+                        d10, x="country", y="metric", color="platform", barmode="group",
+                        color_discrete_sequence=COLOR_SEQ,
+                        labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
+                        title=f"{sli_10} · {wave_10} — Top 10M países",
+                    )
+                    fig10.update_layout(xaxis_tickangle=-30, height=500)
+
+                elif chart_10 == "Barras agrupadas por plataforma":
+                    fig10 = px.bar(
+                        d10, x="platform", y="metric", color="country", barmode="group",
+                        color_discrete_sequence=px.colors.qualitative.Alphabet,
+                        labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
+                        title=f"{sli_10} · {wave_10} — Top 10M por plataforma",
+                    )
+                    fig10.update_layout(xaxis_tickangle=-30, height=500)
+
+                elif chart_10 == "Líneas":
+                    fig10 = px.line(
+                        d10, x="country", y="metric", color="platform", markers=True,
+                        color_discrete_sequence=COLOR_SEQ,
+                        labels={"metric": mlabel, "country": "País", "platform": "Plataforma"},
+                        title=f"{sli_10} · {wave_10} — Top 10M países",
+                    )
+                    fig10.update_layout(xaxis_tickangle=-30)
+
+                else:  # Mapa Top 10M
+                    d10_map = d10.groupby("country")["metric"].sum().reset_index()
+                    d10_map["country_plot"] = d10_map["country"].replace({"Czech Republic": "Czechia"})
+                    fig10 = px.choropleth(
+                        d10_map, locations="country_plot", locationmode="country names",
+                        color="metric", color_continuous_scale="Blues", scope="europe",
+                        labels={"metric": mlabel, "country_plot": "País"},
+                        title=f"{sli_10} · {wave_10} — Top 10M",
+                    )
+                    fig10.update_layout(height=500)
+
+                st.plotly_chart(fig10, use_container_width=True)
+
+                # Tabla pivot país × plataforma
+                pivot10 = d10.pivot_table(index="country", columns="platform", values="metric", aggfunc="sum").round(2)
+                pivot10.index.name = "País"
+                st.dataframe(pivot10, use_container_width=True)
+
+        # ── 2: Varias variables, una plataforma ───────────────────────────────
+        elif analysis_10m.startswith("2"):
+            r1, r2 = st.columns([2, 3])
+            with r1:
+                plat_10b = st.selectbox("Plataforma", sorted(df_10m["platform"].unique()), key="t4b_2_plat")
+                wave_10b = st.selectbox("Ola", [w for w in WAVE_ORDER if w in df_10m["wave_label"].values], key="t4b_2_wave")
+                chart_10b = st.radio("Gráfico", ["Barras agrupadas", "Heatmap variable × país", "Treemap"], key="t4b_2_chart")
+            with r2:
+                slis_10b = st.multiselect(
+                    "Variables SLI (selecciona varias)",
+                    sli_opts(df_10m),
+                    default=sli_opts(df_10m)[:3],
+                    key="t4b_2_slis",
+                )
+
+            d10b = (df_10m[df_10m["sli_label"].isin(slis_10b)]
+                    .query("platform == @plat_10b and wave_label == @wave_10b")
+                    .groupby(["country", "sli_label"])["metric"].sum().reset_index())
+
+            if d10b.empty:
+                st.info("Sin datos.")
+            else:
+                if chart_10b == "Barras agrupadas":
+                    fig10b = px.bar(
+                        d10b, x="country", y="metric", color="sli_label", barmode="group",
+                        color_discrete_sequence=COLOR_SEQ,
+                        labels={"metric": mlabel, "country": "País", "sli_label": "Variable SLI"},
+                        title=f"{plat_10b} · {wave_10b} — Variables × Países Top 10M",
+                    )
+                    fig10b.update_layout(xaxis_tickangle=-30, height=520)
+
+                elif chart_10b == "Heatmap variable × país":
+                    piv10b = d10b.pivot_table(index="sli_label", columns="country", values="metric", aggfunc="sum")
+                    fig10b = px.imshow(
+                        piv10b, color_continuous_scale="Blues", aspect="auto",
+                        labels={"color": mlabel},
+                        title=f"{plat_10b} · {wave_10b} — Heatmap variables × países",
+                    )
+                    fig10b.update_layout(height=max(350, len(piv10b) * 45))
+
+                else:  # Treemap
+                    fig10b = px.treemap(
+                        d10b, path=["country", "sli_label"], values="metric",
+                        color="metric", color_continuous_scale="Blues",
+                        title=f"{plat_10b} · {wave_10b} — Treemap países > 10M",
+                    )
+                    fig10b.update_layout(height=600)
+
+                st.plotly_chart(fig10b, use_container_width=True)
+
+        # ── 3: Evolución temporal ──────────────────────────────────────────────
+        elif analysis_10m.startswith("3"):
+            r1, r2, r3 = st.columns(3)
+            with r1:
+                sli_10c = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_3_sli")
+            with r2:
+                plat_10c = st.selectbox("Plataforma", sorted(df_10m["platform"].unique()), key="t4b_3_plat")
+            with r3:
+                chart_10c = st.radio("Gráfico", ["Líneas por país", "Barras agrupadas por ola", "Área"], key="t4b_3_chart")
+
+            d10c = (pick_sli(df_10m, sli_10c)
+                    .query("platform == @plat_10c")
+                    .groupby(["country", "wave_label"])["metric"].sum().reset_index())
+
+            if d10c.empty:
+                st.info("Sin datos.")
+            else:
+                kw10c = dict(
+                    x="wave_label", y="metric", color="country",
+                    color_discrete_sequence=px.colors.qualitative.Alphabet,
+                    labels={"metric": mlabel, "wave_label": "Ola", "country": "País"},
+                    category_orders={"wave_label": WAVE_ORDER},
+                    title=f"{sli_10c} · {plat_10c} — Evolución países Top 10M",
+                )
+                if chart_10c == "Líneas por país":
+                    fig10c = px.line(d10c, markers=True, **kw10c)
+                    fig10c.update_traces(line_width=2.5, marker_size=9)
+                elif chart_10c == "Barras agrupadas por ola":
+                    fig10c = px.bar(d10c, barmode="group", **kw10c)
+                else:
+                    fig10c = px.area(d10c, **kw10c)
+
+                fig10c.update_layout(height=520)
+                st.plotly_chart(fig10c, use_container_width=True)
+
+                # Tabla de variaciones %
+                piv10c = d10c.pivot_table(index="country", columns="wave_label", values="metric")
+                piv10c.index.name = "País"
+                for i in range(1, len(WAVE_ORDER)):
+                    wp, wc = WAVE_ORDER[i-1], WAVE_ORDER[i]
+                    if wp in piv10c.columns and wc in piv10c.columns:
+                        piv10c[f"Δ% {wp[:3]}→{wc[:3]}"] = (
+                            (piv10c[wc] - piv10c[wp]) / piv10c[wp].abs() * 100
+                        ).round(1)
+                st.dataframe(piv10c.round(2), use_container_width=True)
+
+        # ── 4: Dispersión entre dos olas ──────────────────────────────────────
+        elif analysis_10m.startswith("4"):
+            r1, r2, r3 = st.columns(3)
+            with r1:
+                sli_10d = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_4_sli")
+            with r2:
+                plat_10d = st.selectbox("Plataforma", sorted(df_10m["platform"].unique()), key="t4b_4_plat")
+            with r3:
+                waves_10d = st.select_slider(
+                    "Olas a comparar", options=WAVE_ORDER,
+                    value=(WAVE_ORDER[0], WAVE_ORDER[-1]), key="t4b_4_waves",
+                )
+
+            wx, wy = waves_10d
+            base_d = pick_sli(df_10m, sli_10d).query("platform == @plat_10d")
+            px_d = base_d[base_d["wave_label"]==wx].groupby("country")["metric"].sum().rename("x")
+            py_d = base_d[base_d["wave_label"]==wy].groupby("country")["metric"].sum().rename("y")
+            d10d = pd.concat([px_d, py_d], axis=1).dropna().reset_index()
+            d10d["population"] = d10d["country"].map(POPULATION)
+
+            if d10d.empty:
+                st.info("Sin datos para las dos olas seleccionadas.")
+            else:
+                fig10d = px.scatter(
+                    d10d, x="x", y="y", text="country",
+                    size="population", color="country", size_max=60,
+                    color_discrete_sequence=px.colors.qualitative.Alphabet,
+                    labels={"x": f"{mlabel} · {wx}", "y": f"{mlabel} · {wy}", "country": "País"},
+                    title=f"{sli_10d} · {plat_10d} — {wx} vs {wy} · Top 10M",
+                )
+                mx = max(d10d[["x","y"]].max())
+                fig10d.add_shape(type="line", x0=0, y0=0, x1=mx, y1=mx,
+                                 line=dict(dash="dash", color="gray"))
+                fig10d.add_annotation(x=mx*0.88, y=mx*0.82, text="Sin cambio",
+                                       showarrow=False, font=dict(color="gray", size=11))
+                fig10d.update_traces(textposition="top center")
+                fig10d.update_layout(height=580, showlegend=False)
+                st.plotly_chart(fig10d, use_container_width=True)
+                st.caption("Puntos sobre la diagonal = aumento; bajo la diagonal = descenso entre las dos olas.")
+
+                d10d["variación %"] = ((d10d["y"] - d10d["x"]) / d10d["x"].abs() * 100).round(1)
+                st.dataframe(
+                    d10d[["country","x","y","variación %"]].rename(
+                        columns={"country":"País","x":wx,"y":wy}
+                    ).set_index("País").sort_values("variación %", ascending=False),
+                    use_container_width=True,
+                )
+
+        # ── 5: Heatmap País × Plataforma ──────────────────────────────────────
+        else:
+            r1, r2 = st.columns(2)
+            with r1:
+                sli_10e = st.selectbox("Variable SLI", sli_opts(df_10m), key="t4b_5_sli")
+            with r2:
+                wave_10e = st.selectbox("Ola", [w for w in WAVE_ORDER if w in df_10m["wave_label"].values], key="t4b_5_wave")
+
+            d10e = (pick_sli(df_10m, sli_10e)
+                    .query("wave_label == @wave_10e")
+                    .groupby(["country","platform"])["metric"].sum()
+                    .reset_index())
+
+            if d10e.empty:
+                st.info("Sin datos.")
+            else:
+                piv10e = d10e.pivot_table(index="country", columns="platform", values="metric", aggfunc="sum")
+                piv10e.index.name = "País"
+
+                scale_10e = st.select_slider("Escala de color", ["Blues","Viridis","RdYlGn","Plasma"], value="Blues", key="t4b_5_scale")
+                fig10e = px.imshow(
+                    piv10e, color_continuous_scale=scale_10e, aspect="auto",
+                    labels={"color": mlabel},
+                    title=f"{sli_10e} · {wave_10e} — Heatmap País × Plataforma (Top 10M)",
+                )
+                fig10e.update_layout(height=500)
+                st.plotly_chart(fig10e, use_container_width=True)
+
+                st.dataframe(piv10e.round(2), use_container_width=True)
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  TAB 5 — Mapa                                                               ║
