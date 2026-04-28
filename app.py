@@ -1,11 +1,12 @@
 """
-DisinfoCode Interactive Dashboard — v4
+DisinfoCode Interactive Dashboard — v5
 Ejecutar: streamlit run app.py
 """
 
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 
+import io
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -103,6 +104,23 @@ def run_btn(key: str) -> bool:
 
 def color_radio(key: str) -> str:
     return st.radio("Color por", ["Plataforma", "País"], horizontal=True, key=key)
+
+
+def to_excel(frame: pd.DataFrame, index: bool = False) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        frame.to_excel(writer, index=index, sheet_name="Datos")
+    return buf.getvalue()
+
+
+def dl_excel(frame: pd.DataFrame, fname: str, key: str, index: bool = False):
+    st.download_button(
+        "⬇️ Descargar Excel",
+        data=to_excel(frame, index=index),
+        file_name=f"{fname}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+    )
 
 
 # ── SIDEBAR ────────────────────────────────────────────────────────────────────
@@ -241,6 +259,7 @@ with tab0:
                                   category_orders={"wave_label": WAVE_ORDER})
                 fig0.update_layout(xaxis_tickangle=-30)
                 st.plotly_chart(fig0, use_container_width=True)
+                dl_excel(agg0, "analisis_general_barras", key="dl_t0_barras")
 
             elif ct0 == "Distribución por capítulo":
                 color_col = "country" if cb0 == "País" else "platform"
@@ -252,6 +271,7 @@ with tab0:
                               title="Distribución por capítulo temático")
                 fig0.update_layout(xaxis_tickangle=-30)
                 st.plotly_chart(fig0, use_container_width=True)
+                dl_excel(agg0, "analisis_general_capitulos", key="dl_t0_cap")
 
             elif ct0 == "Evolución por plataforma":
                 color_col = "country" if cb0 == "País" else "platform"
@@ -264,6 +284,7 @@ with tab0:
                                category_orders={"wave_label": WAVE_ORDER})
                 fig0.update_traces(line_width=2.5, marker_size=9)
                 st.plotly_chart(fig0, use_container_width=True)
+                dl_excel(agg0, "analisis_general_evolucion", key="dl_t0_evol")
 
             else:  # Top variables SLI
                 agg0 = (d0.groupby("sli_label")["metric"].sum().reset_index()
@@ -274,6 +295,7 @@ with tab0:
                               title="Top 20 variables SLI por valor agregado")
                 fig0.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(400, len(agg0) * 30))
                 st.plotly_chart(fig0, use_container_width=True)
+                dl_excel(agg0, "analisis_general_top_sli", key="dl_t0_sli")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -359,6 +381,7 @@ with tab1:
             pivot1 = pivot1.reindex(columns=[w for w in WAVE_ORDER if w in pivot1.columns]).round(2)
             pivot1.columns.name = None
             st.dataframe(pivot1, use_container_width=True)
+            dl_excel(pivot1.reset_index(), "por_plataforma", key="dl_t1")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -442,6 +465,7 @@ with tab2:
                                      labels={"metric": mlabel, "country": "País"},
                                      title=f"{p2['chosen']} · Top 15 países")
                 st.plotly_chart(fig2, use_container_width=True)
+                dl_excel(d2, "por_pais", key="dl_t2")
 
         # Evolución entre olas
         st.subheader("Evolución entre olas · comparativa por país")
@@ -482,6 +506,7 @@ with tab2:
                     fig2b = px.line(d2b, markers=True, **kw2b)
                 fig2b.update_layout(xaxis_tickangle=-45, height=450)
                 st.plotly_chart(fig2b, use_container_width=True)
+                dl_excel(d2b, "por_pais_evolucion", key="dl_t2b")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -556,6 +581,7 @@ with tab3:
                 if wp in piv3.columns and wc in piv3.columns:
                     piv3[f"Δ% {wp[:3]}→{wc[:3]}"] = ((piv3[wc] - piv3[wp]) / piv3[wp].abs() * 100).round(1)
             st.dataframe(piv3.round(2), use_container_width=True)
+            dl_excel(piv3.round(2).reset_index(), "evolucion_temporal", key="dl_t3")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -640,6 +666,7 @@ with tab4:
                     fig4a = px.treemap(da, path=["sli_label"], values="metric",
                                        color="metric", color_continuous_scale="Blues", title=title_a)
                 st.plotly_chart(fig4a, use_container_width=True)
+                dl_excel(da, "avanzado_A_variables_plataforma", key="dl_t4a")
 
     # ── B ─────────────────────────────────────────────────────────────────────
     elif analysis4.startswith("B"):
@@ -689,6 +716,8 @@ with tab4:
                 fig4b.update_layout(height=600, showlegend=False)
                 st.plotly_chart(fig4b, use_container_width=True)
                 st.caption("Puntos sobre la diagonal = aumento; bajo la diagonal = descenso.")
+                dl_excel(d_sc[["country", "x", "y"]].rename(columns={"country": "País", "x": wave_x, "y": wave_y}),
+                         "avanzado_B_dispersion", key="dl_t4b")
 
     # ── C ─────────────────────────────────────────────────────────────────────
     elif analysis4.startswith("C"):
@@ -729,6 +758,8 @@ with tab4:
                 fig4c.update_layout(yaxis={"categoryorder": "total ascending"}, height=max(350, p4c["topn"] * 38))
                 fig4c.update_traces(texttemplate="#%{text}", textposition="inside")
                 st.plotly_chart(fig4c, use_container_width=True)
+                dl_excel(d_c[["rank", "country", "metric"]].rename(columns={"country": "País", "metric": mlabel, "rank": "Ranking"}),
+                         "avanzado_C_ranking", key="dl_t4c")
 
                 top_countries = d_c["country"].tolist()
                 d_c2 = (pick_sli(df[df["country"].isin(top_countries)], p4c["sli"])
@@ -742,6 +773,7 @@ with tab4:
                                      title=f"Evolución del Top {p4c['topn']} · {p4c['sli']} · {p4c['plat']}")
                     fig4c2.update_traces(line_width=2)
                     st.plotly_chart(fig4c2, use_container_width=True)
+                    dl_excel(d_c2, "avanzado_C_evolucion_top", key="dl_t4c2")
 
     # ── D ─────────────────────────────────────────────────────────────────────
     elif analysis4.startswith("D"):
@@ -801,7 +833,7 @@ with tab4:
                                     category_orders={"wave_label": WAVE_ORDER},
                                     title=f"{p4d['sli']} · {paises_str_d}")
                     fig4d.update_traces(line_width=2.5, marker_size=9)
-                else:  # Radar (solo funciona bien con pocos elementos)
+                else:  # Radar
                     cats_d = d_d[color_col_d].unique().tolist()
                     fig4d = go.Figure()
                     for wave in WAVE_ORDER:
@@ -816,6 +848,7 @@ with tab4:
                     fig4d.update_layout(polar=dict(radialaxis=dict(visible=True)),
                                         title=f"{p4d['sli']} · {paises_str_d} — Radar", height=550)
                 st.plotly_chart(fig4d, use_container_width=True)
+                dl_excel(d_d, "avanzado_D_plataformas_pais", key="dl_t4d")
 
     # ── E ─────────────────────────────────────────────────────────────────────
     else:
@@ -866,9 +899,10 @@ with tab4:
                 )
                 st.plotly_chart(fig4e, use_container_width=True)
                 st.caption("Valores normalizados (0-1) para comparar variables con escalas distintas.")
-                st.dataframe(d_e[["sli_label", "metric"]].rename(
-                    columns={"sli_label": "Variable", "metric": mlabel}).set_index("Variable"),
-                    use_container_width=True)
+                tbl_e = d_e[["sli_label", "metric"]].rename(
+                    columns={"sli_label": "Variable", "metric": mlabel}).set_index("Variable")
+                st.dataframe(tbl_e, use_container_width=True)
+                dl_excel(tbl_e.reset_index(), "avanzado_E_radar", key="dl_t4e")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -962,6 +996,7 @@ with tab4b:
                     pivot10 = d10.pivot_table(index="country", columns="platform", values="metric", aggfunc="sum").round(2)
                     pivot10.index.name = "País"
                     st.dataframe(pivot10, use_container_width=True)
+                    dl_excel(pivot10.reset_index(), "top10m_1_variable", key="dl_t10m1")
 
         # ── 2 ─────────────────────────────────────────────────────────────────
         elif analysis_10m.startswith("2"):
@@ -1009,6 +1044,7 @@ with tab4b:
                                             title=f"{p10_2['plat']} · {p10_2['wave']} — Treemap países > 10M")
                         fig10b.update_layout(height=600)
                     st.plotly_chart(fig10b, use_container_width=True)
+                    dl_excel(d10b, "top10m_2_variables_plataforma", key="dl_t10m2")
 
         # ── 3 ─────────────────────────────────────────────────────────────────
         elif analysis_10m.startswith("3"):
@@ -1061,6 +1097,7 @@ with tab4b:
                         if wp in piv10c.columns and wc in piv10c.columns:
                             piv10c[f"Δ% {wp[:3]}→{wc[:3]}"] = ((piv10c[wc] - piv10c[wp]) / piv10c[wp].abs() * 100).round(1)
                     st.dataframe(piv10c.round(2), use_container_width=True)
+                    dl_excel(piv10c.round(2).reset_index(), "top10m_3_evolucion", key="dl_t10m3")
 
         # ── 4 ─────────────────────────────────────────────────────────────────
         elif analysis_10m.startswith("4"):
@@ -1104,12 +1141,11 @@ with tab4b:
                     fig10d.update_layout(height=580, showlegend=False)
                     st.plotly_chart(fig10d, use_container_width=True)
                     d10d["variación %"] = ((d10d["y"] - d10d["x"]) / d10d["x"].abs() * 100).round(1)
-                    st.dataframe(
-                        d10d[["country", "x", "y", "variación %"]].rename(
-                            columns={"country": "País", "x": wx, "y": wy}
-                        ).set_index("País").sort_values("variación %", ascending=False),
-                        use_container_width=True,
-                    )
+                    tbl10d = (d10d[["country", "x", "y", "variación %"]]
+                              .rename(columns={"country": "País", "x": wx, "y": wy})
+                              .set_index("País").sort_values("variación %", ascending=False))
+                    st.dataframe(tbl10d, use_container_width=True)
+                    dl_excel(tbl10d.reset_index(), "top10m_4_dispersion", key="dl_t10m4")
 
         # ── 5 ─────────────────────────────────────────────────────────────────
         else:
@@ -1145,6 +1181,7 @@ with tab4b:
                     fig10e.update_layout(height=500)
                     st.plotly_chart(fig10e, use_container_width=True)
                     st.dataframe(piv10e.round(2), use_container_width=True)
+                    dl_excel(piv10e.round(2).reset_index(), "top10m_5_heatmap", key="dl_t10m5")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1189,6 +1226,8 @@ with tab5:
                                      title=f"{p5['chosen']} · {p5['plat']} · {p5['wave']}")
                 fig5.update_layout(height=620)
                 st.plotly_chart(fig5, use_container_width=True)
+                dl_excel(d5[["country", "metric"]].rename(columns={"country": "País", "metric": mlabel}),
+                         "mapa_europa", key="dl_t5")
 
         st.subheader("Comparativa de dos olas en mapa")
         with st.form("tab5b_form"):
@@ -1270,6 +1309,7 @@ with tab6:
                              title=f"Heatmap: {p6['hy']} × {p6['hx']}")
             fig6.update_layout(height=max(420, len(piv6) * 22))
             st.plotly_chart(fig6, use_container_width=True)
+            dl_excel(piv6.round(2).reset_index(), "heatmap", key="dl_t6")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1297,6 +1337,10 @@ with tab7:
     st.dataframe(df_show, use_container_width=True, height=520)
     st.caption(f"{len(df_show):,} filas mostradas")
 
-    csv_bytes = df_show.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("⬇️ Descargar CSV filtrado", csv_bytes,
-                       file_name="disinfocode_filtrado.csv", mime="text/csv")
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        csv_bytes = df_show.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("⬇️ Descargar CSV", csv_bytes,
+                           file_name="disinfocode_filtrado.csv", mime="text/csv")
+    with dl2:
+        dl_excel(df_show, "disinfocode_filtrado", key="dl_t7_excel")
