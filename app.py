@@ -123,6 +123,20 @@ def dl_excel(frame: pd.DataFrame, fname: str, key: str, index: bool = False):
     )
 
 
+def tab_frame(selected: list) -> pd.DataFrame:
+    """Si el usuario selecciona países en un tab, usa df_base (sin filtro de país
+    del sidebar). Si no hay selección, usa df (respeta el filtro global)."""
+    if selected:
+        return df_base[df_base["country"].isin(selected)]
+    return df
+
+
+def tab_frame_members(selected: list) -> pd.DataFrame:
+    """Como tab_frame pero excluye siempre las filas Total EU/EEA."""
+    frame = tab_frame(selected)
+    return frame[~frame["country"].str.contains("Total", na=False)]
+
+
 # ── SIDEBAR ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🔍 Filtros globales")
@@ -153,14 +167,18 @@ with st.sidebar:
     st.caption("Fuente: disinfocode.eu · Población: REST Countries API 2024")
 
 # ── FILTRADO GLOBAL ────────────────────────────────────────────────────────────
-df = df_all.copy()
-if sel_waves:      df = df[df["wave_label"].isin(sel_waves)]
-if sel_platforms:  df = df[df["platform"].isin(sel_platforms)]
-if sel_chapters:   df = df[df["chapter"].isin(sel_chapters)]
-if sel_countries:  df = df[df["country"].isin(sel_countries)]
-if sel_sli_filt:   df = df[df["sli_label"].isin(sel_sli_filt)]
+# df_base: todos los filtros globales EXCEPTO el filtro de país del sidebar.
+# Permite que los selectores de país dentro de cada tab accedan a cualquier país
+# independientemente de lo que el sidebar haya restringido.
+df_base = df_all.copy()
+if sel_waves:      df_base = df_base[df_base["wave_label"].isin(sel_waves)]
+if sel_platforms:  df_base = df_base[df_base["platform"].isin(sel_platforms)]
+if sel_chapters:   df_base = df_base[df_base["chapter"].isin(sel_chapters)]
+if sel_sli_filt:   df_base = df_base[df_base["sli_label"].isin(sel_sli_filt)]
+df_base, mlabel = apply_metric(df_base, metric_mode, df_all)
 
-df, mlabel = apply_metric(df, metric_mode, df_all)
+# df: filtrado completo incluyendo el país del sidebar (para métricas generales)
+df = df_base[df_base["country"].isin(sel_countries)].copy() if sel_countries else df_base.copy()
 
 # ── CABECERA ───────────────────────────────────────────────────────────────────
 st.title("📊 DisinfoCode · Comparativa de Plataformas Sociales")
@@ -236,7 +254,7 @@ with tab0:
         if not p0:
             st.info("Configura los filtros en la barra lateral y pulsa **▶ Analizar**.")
         else:
-            d0 = filter_countries(df, p0["countries"])
+            d0 = tab_frame(p0["countries"])
             cb0 = p0["color_by"]
             ct0 = p0["chart_type"]
 
@@ -304,7 +322,7 @@ with tab0:
 with tab1:
     st.subheader("Comparativa por Plataforma")
 
-    agg1_raw = df.groupby(["platform", "wave_label", "sli_label", "country"])["metric"].sum().reset_index()
+    agg1_raw = df_base.groupby(["platform", "wave_label", "sli_label", "country"])["metric"].sum().reset_index()
     opts1 = sli_opts(agg1_raw)
 
     with st.form("tab1_form"):
@@ -333,8 +351,7 @@ with tab1:
     elif p1["chosen"] == NONE_OPT:
         st.info("Selecciona una variable SLI para continuar.")
     else:
-        d1_raw = pick_sli(agg1_raw, p1["chosen"])
-        d1_raw = filter_countries(d1_raw, p1["countries"])
+        d1_raw = pick_sli(tab_frame(p1["countries"]), p1["chosen"])
         cb1 = p1["color_by"]
         ct1 = p1["chart"]
 
@@ -390,9 +407,9 @@ with tab1:
 with tab2:
     st.subheader("Comparativa por País")
 
-    df_c = df[~df["country"].str.contains("Total", na=False)]
+    df_c = df_base[~df_base["country"].str.contains("Total", na=False)]
     if df_c.empty:
-        st.warning("Selecciona 'Por estado miembro' o 'Ambos' en el filtro geográfico.")
+        st.warning("Sin datos de estados miembro con los filtros actuales.")
     else:
         with st.form("tab2_form"):
             r1, r2, r3 = st.columns([3, 2, 2])
@@ -430,8 +447,7 @@ with tab2:
         elif p2["chosen"] == NONE_OPT or p2["wave"] == NONE_OPT or p2["plat"] == NONE_OPT:
             st.info("Selecciona variable SLI, ola y plataforma para continuar.")
         else:
-            base2 = pick_sli(df_c, p2["chosen"])
-            base2 = filter_countries(base2, p2["countries"])
+            base2 = pick_sli(tab_frame_members(p2["countries"]), p2["chosen"])
             d2 = (base2.query("wave_label == @p2['wave'] and platform == @p2['plat']")
                   .groupby("country")["metric"].sum().reset_index()
                   .sort_values("metric", ascending=False))
@@ -489,8 +505,7 @@ with tab2:
 
         p2b = st.session_state.get("t2b_params")
         if p2b and p2b["chosen"] != NONE_OPT and p2b["plat"] != NONE_OPT:
-            base2b = pick_sli(df_c, p2b["chosen"])
-            base2b = filter_countries(base2b, p2b["countries"])
+            base2b = pick_sli(tab_frame_members(p2b["countries"]), p2b["chosen"])
             d2b = (base2b.query("platform == @p2b['plat']")
                    .groupby(["country", "wave_label"])["metric"].sum().reset_index())
             if not d2b.empty:
@@ -544,8 +559,7 @@ with tab3:
         st.info("Selecciona una variable SLI para continuar.")
     else:
         cb3 = p3["color_by"]
-        base3 = pick_sli(df, p3["chosen"])
-        base3 = filter_countries(base3, p3["countries"])
+        base3 = pick_sli(tab_frame(p3["countries"]), p3["chosen"])
 
         if cb3 == "Plataforma":
             d3 = base3.groupby(["wave_label", "platform"])["metric"].sum().reset_index()
@@ -629,10 +643,10 @@ with tab4:
         elif any(v == NONE_OPT for v in [p4a["plat"], p4a["wave"]]) or not p4a["slis"]:
             st.info("Completa plataforma, ola y al menos una variable SLI.")
         else:
-            base_a = df[(df["platform"] == p4a["plat"]) &
-                        (df["sli_label"].isin(p4a["slis"])) &
-                        (df["wave_label"] == p4a["wave"])]
-            base_a = filter_countries(base_a, p4a["countries"])
+            _fra = tab_frame(p4a["countries"])
+            base_a = _fra[(_fra["platform"] == p4a["plat"]) &
+                          (_fra["sli_label"].isin(p4a["slis"])) &
+                          (_fra["wave_label"] == p4a["wave"])]
             cb_a = p4a["color_by"]
 
             if cb_a == "País":
@@ -695,9 +709,8 @@ with tab4:
             st.info("Selecciona variable SLI y plataforma.")
         else:
             wave_x, wave_y = p4b["waves"]
-            df_b = pick_sli(df[~df["country"].str.contains("Total")], p4b["sli"])
+            df_b = pick_sli(tab_frame_members(p4b["countries"]), p4b["sli"])
             df_b = df_b[df_b["platform"] == p4b["plat"]]
-            df_b = filter_countries(df_b, p4b["countries"])
             px_d = df_b[df_b["wave_label"] == wave_x].groupby("country")["metric"].sum().rename("x")
             py_d = df_b[df_b["wave_label"] == wave_y].groupby("country")["metric"].sum().rename("y")
             d_sc = pd.concat([px_d, py_d], axis=1).dropna().reset_index()
@@ -743,7 +756,7 @@ with tab4:
         elif any(v == NONE_OPT for v in [p4c["sli"], p4c["wave"], p4c["plat"]]):
             st.info("Selecciona variable SLI, ola y plataforma.")
         else:
-            d_c = (pick_sli(df[~df["country"].str.contains("Total")], p4c["sli"])
+            d_c = (pick_sli(tab_frame_members([]), p4c["sli"])
                    .query("wave_label == @p4c['wave'] and platform == @p4c['plat']")
                    .groupby("country")["metric"].sum().reset_index()
                    .sort_values("metric", ascending=False).head(p4c["topn"]))
@@ -802,8 +815,7 @@ with tab4:
             st.info("Selecciona una variable SLI.")
         else:
             cb_d = p4d["color_by"]
-            base_d = pick_sli(df, p4d["sli"])
-            base_d = filter_countries(base_d, p4d["countries"])
+            base_d = pick_sli(tab_frame(p4d["countries"]), p4d["sli"])
 
             if cb_d == "Plataforma":
                 d_d = base_d.groupby(["platform", "wave_label"])["metric"].sum().reset_index()
@@ -876,10 +888,10 @@ with tab4:
         elif any(v == NONE_OPT for v in [p4e["plat"], p4e["wave"]]) or not p4e["slis"]:
             st.info("Completa plataforma, ola y variables SLI.")
         else:
-            base_e = df[(df["platform"] == p4e["plat"]) &
-                        (df["wave_label"] == p4e["wave"]) &
-                        (df["sli_label"].isin(p4e["slis"]))]
-            base_e = filter_countries(base_e, p4e["countries"])
+            _fre = tab_frame(p4e["countries"])
+            base_e = _fre[(_fre["platform"] == p4e["plat"]) &
+                          (_fre["wave_label"] == p4e["wave"]) &
+                          (_fre["sli_label"].isin(p4e["slis"]))]
             d_e = base_e.groupby("sli_label")["metric"].sum().reset_index()
 
             if d_e.empty:
@@ -923,7 +935,7 @@ with tab4b:
         )
         st.dataframe(pop_df.set_index("País"), use_container_width=True)
 
-    df_10m = df[df["country"].isin(TOP10M_COUNTRIES)].copy()
+    df_10m = df_base[df_base["country"].isin(TOP10M_COUNTRIES)].copy()
 
     if df_10m.empty:
         st.warning("Sin datos. Asegúrate de seleccionar 'Por estado miembro' o 'Ambos' en el filtro geográfico.")
@@ -1190,9 +1202,9 @@ with tab4b:
 with tab5:
     st.subheader("Mapa de Europa")
 
-    df_map = df[~df["country"].str.contains("Total", na=False)]
+    df_map = df_base[~df_base["country"].str.contains("Total", na=False)]
     if df_map.empty:
-        st.warning("Selecciona 'Por estado miembro' en los filtros.")
+        st.warning("Sin datos de estados miembro con los filtros actuales.")
     else:
         with st.form("tab5_form"):
             r1, r2, r3 = st.columns(3)
