@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Datos cacheados (JSONs crudos descargados - no necesarios para la web)
+data/raw/
+
+# Excel de salida (regenerable con main.py)
+output/*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
