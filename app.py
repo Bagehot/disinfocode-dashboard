@@ -1198,7 +1198,7 @@ with tab7:
 
     search = st.text_input("🔎 Buscar en tabla", placeholder="país, plataforma, variable…", key="t7_search")
     if search:
-        mask = df_show.apply(lambda col: col.astype(str).str.contains(search, case=False, na=False)).any(axis=1)
+        mask = df_show.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)
         df_show = df_show[mask]
 
     st.dataframe(df_show, use_container_width=True, height=520)
